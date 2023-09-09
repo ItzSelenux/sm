@@ -1,0 +1,239 @@
+#!/bin/sh
+source /etc/sm.conf
+
+if [ "$nogpg" -eq 0 ]; then
+	gpg=" "
+else
+	gpg="--skippgpcheck"
+fi
+
+if [ "$repo_dep_resolution" -eq 0 ]; then
+	rdr=" "
+elif [ "$repo_dep_resolution" -eq 1 ]; then
+	rdr=" "
+	ndeps="y"
+elif [ "$repo_dep_resolution" -eq 2 ]; then
+	rdr="--syncdeps"
+else
+	rdr=" "
+fi
+
+if [ "$dep_removing" -eq 0 ]; then
+	deprem="-R"
+else
+	deprem="-Rns"
+fi
+
+help()
+{
+printf "
+sm - Source Manager for pacman/makepkg
+
+-S - add a package to the srclist and install it
+   -e - edit the pkgbuild before making the package
+-R - remove, remove a source from de srclist
+-U - update, update all you packages
+-L - List the packages included in the srcdir
+\n"
+}
+
+clone()
+{
+if [ "$(id -u)" -eq 0 ]; then
+	:
+else
+	echo "Sorry, please run this command as root"
+	exit
+fi
+cd $srcdir
+cloned=false
+
+if [ -e "$pkg" ]; then
+	echo "$pkg already exist in the srcdir"
+	echo "¿Do you want to re-build $pkg? (y/n)"
+	read answer
+
+	if [ "$answer" = "y" ]; then
+		rm -rf "$pkg"
+		:
+	else
+		return
+	fi
+else
+	:
+fi
+
+
+IFS=' ' read -r -a sources <<< "$source_list"
+
+for source in "${sources[@]}"; do
+	git ls-remote "${source}/${pkg}" > /dev/null
+
+	if [ $? -eq 0 ]; then
+		echo "$pkg is available in $source"
+		cloned=true
+		break
+	elif [ $? -eq 128 ]; then
+		echo "Error: $source has no candidant for $pkg"
+	else
+		echo "Error: $source has no candidant for $pkg"
+	fi
+done
+
+if [ "$cloned" = true ]; then
+
+	echo "¿Do you want to install $pkg? (y/n)"
+	read answer
+	if [ "$answer" = "y" ]; then
+		git clone "${source}/${pkg}"
+		echo "sucessfully cloned!, making package"
+		chmod 777 $pkg
+		cd $pkg
+		if [ "$extra" = editpkg ]; then
+			$editor PKGBUILD
+			:
+		fi
+		if [ "$ndeps" = y ]; then
+			cat PKGBUILD | grep -w "depends" > /tmp/smdeps
+			source /tmp/smdeps
+			sm -S ${depends[*]}
+		fi
+		su -c "makepkg -f --noconfirm $rdr $gpg" $muser
+		if [ $? -eq 0 ]; then
+			mv *.pkg.tar.* $local_repo_dir
+			rm -rf src
+			git clean -f * 
+			git restore *
+			cd $local_repo_dir
+			repo-add $local_repo_name.db.tar.gz $pkg-*
+			pacman -Syu --noconfirm
+			pacman -S $local_repo_name/$pkg --noconfirm
+			echo done
+		else
+			echo "makepkg failed or was canceled. Deleting $pkg folder."
+			cd ..
+			rm -rf $pkg
+		fi
+		:
+	else
+		return
+	fi
+else
+	echo "ERROR: package has no candidant in any source"
+fi
+}
+
+remove()
+{
+if [ "$(id -u)" -eq 0 ]; then
+	:
+else
+	echo "Sorry, please run this command as root"
+	exit
+fi
+
+if [ -e "$srcdir$pkg" ]; then
+	echo "$pkg found in the srcdir"
+	echo "¿Do you want to remove $pkg? (y/n)"
+	read answer
+	if [ "$answer" = "y" ]; then
+		pacman $deprem $pkg
+		rm -rf $srcdir$pkg
+		echo "Removed from srcdir..."
+		cd $local_repo_dir
+		repo-remove $local_repo_name.db.tar.gz $pkg
+		:
+	else
+		return
+	fi
+else
+	echo "ERROR: $pkg does not exist in the srcdir"
+	return
+fi
+}
+
+list()
+{
+ls -1 $srcdir
+}
+
+upgrade()
+{
+if [ "$(id -u)" -eq 0 ]; then
+	:
+else
+	echo "Sorry, please run this command as root"
+	exit
+fi
+
+cd $srcdir
+for folder in *; do
+	if [ -d "$folder/.git" ]; then
+		echo "Processing Folder: $folder"
+		(cd "$folder" || continue
+		git pull
+		ch=$(git status -s)
+		if [ -n "$ch" ]; then
+			echo "New changes detected in: $folder"
+			su -c "makepkg -fi --noconfirm"
+		else
+			echo "No changes in: $folder, skipping"
+		fi
+	cd - >/dev/null)
+	fi
+done
+}
+
+
+
+if [ $# -eq 0 ]; then
+	help
+	exit 1
+fi
+
+while getopts ":SLRU" opt; do
+    case $opt in
+        S)
+			action="clone"
+            ;;
+        R)
+            action="remove"
+            ;;
+        L)
+            list
+            exit
+            ;;
+        U)
+            upgrade
+            exit
+            ;;
+        \?)
+			if [ "$1" = "-Se" ]; then
+			param="editpkg"
+			else
+            echo "Opción inválida: -$OPTARG"
+            help
+            fi
+            ;;
+    esac
+done
+
+
+
+shift $((OPTIND-1))
+if [ "$1" = "-S" ]; then
+	shift
+fi
+
+uargv=()
+for arg in "$@"; do
+	if [[ ! " ${uargv[@]} " =~ " $arg " ]]; then
+		uargv+=("$arg")
+	fi
+done
+if [ "${#uargv[@]}" -gt 0 ]; then
+	for pkg in "${uargv[@]}"; do
+		extra=$param
+		$action $pkg
+	done
+fi
