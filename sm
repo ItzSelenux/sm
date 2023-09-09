@@ -31,8 +31,8 @@ sm - Source Manager for pacman/makepkg
 
 -S - add a package to the srclist and install it
    -e - edit the pkgbuild before making the package
--R - remove, remove a source from de srclist
--U - update, update all you packages
+-R - remove a source from de srclist
+-U - update all you packages
 -L - List the packages included in the srcdir
 \n"
 }
