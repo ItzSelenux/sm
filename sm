@@ -211,7 +211,7 @@ while getopts ":SLRU" opt; do
 			if [ "$1" = "-Se" ]; then
 			param="editpkg"
 			else
-            echo "Opción inválida: -$OPTARG"
+            echo "invalid option: -$OPTARG"
             help
             fi
             ;;
