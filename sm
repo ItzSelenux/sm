@@ -100,7 +100,7 @@ if [ "$cloned" = true ]; then
 		fi
 		su -c "makepkg -f --noconfirm $rdr $gpg" $muser
 		if [ $? -eq 0 ]; then
-			mv *.pkg.tar.* $local_repo_dir
+			mv *.pkg.tar* $local_repo_dir
 			rm -rf src
 			git clean -f * 
 			git restore *
